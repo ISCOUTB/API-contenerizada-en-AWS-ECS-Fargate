@@ -1,9 +1,7 @@
-locals {
-  name = "${var.project_name}-${var.environment}"
-}
 
-data "aws_availability_zones" "available" {
-  state = "available"
+locals {
+  name               = "${var.project_name}-${var.environment}"
+  availability_zones = ["${var.aws_region}a", "${var.aws_region}b"]
 }
 
 resource "aws_vpc" "main" {
@@ -13,6 +11,17 @@ resource "aws_vpc" "main" {
 
   tags = {
     Name = "${local.name}-vpc"
+  }
+}
+
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.main.id
+
+  ingress = []
+  egress  = []
+
+  tags = {
+    Name = "${local.name}-default-sg"
   }
 }
 
@@ -29,7 +38,7 @@ resource "aws_subnet" "public" {
 
   vpc_id                  = aws_vpc.main.id
   cidr_block              = cidrsubnet(aws_vpc.main.cidr_block, 8, count.index + 1)
-  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  availability_zone       = local.availability_zones[count.index]
   map_public_ip_on_launch = false
 
   tags = {
