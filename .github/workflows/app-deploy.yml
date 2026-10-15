@@ -3,7 +3,8 @@ name: Desplegar aplicación
 on:
   push:
     branches:
-      - main
+    - master
+    - main
     paths:
       - "app/**"
       - ".github/workflows/app-deploy.yml"
@@ -74,8 +75,7 @@ jobs:
           push: false
           load: true
           tags: |
-            ${{ steps.infra.outputs.ecr_repository_url }}:${{ github.sha }}
-            ${{ steps.infra.outputs.ecr_repository_url }}:latest
+           ${{ steps.infra.outputs.ecr_repository_url }}:${{ github.sha }}
 
       - name: Analizar imagen con Trivy antes de publicarla
         uses: aquasecurity/trivy-action@0.28.0
@@ -96,7 +96,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker push "${ECR_REPOSITORY_URL}:${IMAGE_TAG}"
-          docker push "${ECR_REPOSITORY_URL}:latest"
+         
 
       - name: Descargar definición de tarea actual
         env:
