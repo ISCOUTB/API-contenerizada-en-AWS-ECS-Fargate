@@ -1,0 +1,143 @@
+name: Desplegar aplicación
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "app/**"
+      - ".github/workflows/app-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Probar, analizar y desplegar la API
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+
+    steps:
+      - name: Obtener el código
+        uses: actions/checkout@v4.2.2
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      - name: Instalar dependencias y ejecutar pruebas
+        working-directory: app
+        run: |
+          python -m pip install --no-cache-dir -r requirements.txt
+          python -m pytest -q
+
+      - name: Configurar Terraform para leer los outputs
+        uses: hashicorp/setup-terraform@v3.1.2
+
+      - name: Configurar credenciales AWS con OIDC
+        uses: aws-actions/configure-aws-credentials@v4.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Obtener outputs de la infraestructura
+        working-directory: infra/terraform
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}"
+          {
+            echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)"
+            echo "ecs_cluster_name=$(terraform output -raw ecs_cluster_name)"
+            echo "ecs_service_name=$(terraform output -raw ecs_service_name)"
+            echo "task_definition_family=$(terraform output -raw ecs_task_definition_family)"
+            echo "api_url=$(terraform output -raw api_url)"
+          } >> "$GITHUB_OUTPUT"
+        id: infra
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3.10.0
+
+      - name: Construir imagen con etiquetas SHA y latest
+        uses: docker/build-push-action@v6.13.0
+        with:
+          context: ./app
+          push: false
+          load: true
+          tags: |
+            ${{ steps.infra.outputs.ecr_repository_url }}:${{ github.sha }}
+            ${{ steps.infra.outputs.ecr_repository_url }}:latest
+
+      - name: Analizar imagen con Trivy antes de publicarla
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.infra.outputs.ecr_repository_url }}:${{ github.sha }}
+          format: table
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Iniciar sesión en ECR
+        uses: aws-actions/amazon-ecr-login@v2.0.1
+
+      - name: Publicar imagen aprobada en ECR
+        env:
+          ECR_REPOSITORY_URL: ${{ steps.infra.outputs.ecr_repository_url }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker push "${ECR_REPOSITORY_URL}:${IMAGE_TAG}"
+          docker push "${ECR_REPOSITORY_URL}:latest"
+
+      - name: Descargar definición de tarea actual
+        env:
+          ECS_CLUSTER: ${{ steps.infra.outputs.ecs_cluster_name }}
+          ECS_SERVICE: ${{ steps.infra.outputs.ecs_service_name }}
+          TASK_DEFINITION_FAMILY: ${{ steps.infra.outputs.task_definition_family }}
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_DEFINITION_FAMILY" \
+            --query taskDefinition \
+            --output json > task-definition.json
+
+      - name: Actualizar imagen y versión en la definición
+        id: render-task
+        uses: aws-actions/amazon-ecs-render-task-definition@v1.5.0
+        with:
+          task-definition: task-definition.json
+          container-name: api
+          image: ${{ steps.infra.outputs.ecr_repository_url }}:${{ github.sha }}
+          environment-variables: |
+            APP_VERSION=${{ github.sha }}
+
+      - name: Desplegar en ECS y esperar estabilidad
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2.6.1
+        with:
+          task-definition: ${{ steps.render-task.outputs.task-definition }}
+          service: ${{ steps.infra.outputs.ecs_service_name }}
+          cluster: ${{ steps.infra.outputs.ecs_cluster_name }}
+          wait-for-service-stability: true
+
+      - name: Verificar endpoint y resumir despliegue
+        env:
+          API_URL: ${{ steps.infra.outputs.api_url }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          curl --fail --show-error --silent --retry 10 --retry-delay 6 \
+            "${API_URL}/health"
+          {
+            echo "## Despliegue de DOMUSNET"
+            echo
+            echo "- URL pública: ${API_URL}"
+            echo "- Salud: ${API_URL}/health"
+            echo "- Imagen desplegada: \`${IMAGE_TAG}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

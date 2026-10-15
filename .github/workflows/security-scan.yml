@@ -1,0 +1,39 @@
+name: Análisis de seguridad del repositorio
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  trivy:
+    name: Trivy filesystem
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obtener el código
+        uses: actions/checkout@v4.2.2
+
+      - name: Analizar vulnerabilidades, secretos y configuración
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: "1"
+
+      - name: Guardar resultados como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: resultados-trivy
+          path: trivy-results.sarif
+          if-no-files-found: warn
+          retention-days: 14

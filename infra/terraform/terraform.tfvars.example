@@ -1,0 +1,10 @@
+aws_region         = "us-east-1"
+project_name       = "domusnet-api"
+environment        = "dev"
+team_name          = "DOMUSNET"
+app_port           = 8000
+desired_count      = 1
+cpu                = 256
+memory             = 512
+log_retention_days = 7
+image_tag          = "latest"

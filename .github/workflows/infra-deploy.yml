@@ -1,0 +1,114 @@
+name: Validar y desplegar infraestructura
+
+on:
+  pull_request:
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/infra-deploy.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/infra-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      destroy:
+        description: "Destruir la infraestructura principal (no elimina el bucket bootstrap)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform:
+    name: Validar, revisar y operar Terraform
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+
+    steps:
+      - name: Obtener el código
+        uses: actions/checkout@v4.2.2
+
+      - name: Configurar Terraform
+        uses: hashicorp/setup-terraform@v3.1.2
+
+      - name: Configurar credenciales AWS con OIDC
+        uses: aws-actions/configure-aws-credentials@v4.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Verificar formato de Terraform
+        run: terraform fmt -check -recursive infra/terraform
+
+      - name: Inicializar Terraform
+        working-directory: infra/terraform
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: Validar configuración
+        working-directory: infra/terraform
+        run: terraform validate
+
+      - name: Analizar infraestructura con Checkov
+        uses: bridgecrewio/checkov-action@v12.2811.0
+        with:
+          directory: infra/terraform
+          quiet: true
+          soft_fail: false
+
+      - name: Crear plan para Pull Request
+        if: github.event_name == 'pull_request'
+        working-directory: infra/terraform
+        run: |
+          terraform plan -input=false -no-color -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+          {
+            echo "## Plan de Terraform"
+            echo '```terraform'
+            cat plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Aplicar infraestructura en main
+        if: github.event_name == 'push'
+        working-directory: infra/terraform
+        run: terraform apply -input=false -auto-approve
+
+      - name: Destruir infraestructura por solicitud explícita
+        if: github.event_name == 'workflow_dispatch' && inputs.destroy
+        working-directory: infra/terraform
+        run: terraform destroy -input=false -auto-approve
+
+      - name: Aplicar desde ejecución manual
+        if: github.event_name == 'workflow_dispatch' && !inputs.destroy
+        working-directory: infra/terraform
+        run: terraform apply -input=false -auto-approve
+
+      - name: Publicar outputs de infraestructura
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: infra/terraform
+        run: |
+          {
+            echo "## Outputs de infraestructura"
+            echo
+            if [[ "${{ inputs.destroy }}" == "true" ]]; then
+              echo "La infraestructura principal fue destruida. El bucket bootstrap permanece."
+            else
+              echo "- URL pública: $(terraform output -raw api_url)"
+              echo "- Repositorio ECR: $(terraform output -raw ecr_repository_url)"
+              echo "- Clúster ECS: $(terraform output -raw ecs_cluster_name)"
+              echo "- Servicio ECS: $(terraform output -raw ecs_service_name)"
+              echo "- Grupo de logs: $(terraform output -raw log_group_name)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
