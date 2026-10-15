@@ -1,9 +1,10 @@
 
-#checkov:skip=CKV_AWS_260:El acceso HTTP publico termina en el ALB, que es el unico punto de entrada del taller.
 resource "aws_security_group" "alb" {
   name        = "${local.name}-alb"
   description = "Entrada HTTP publica al balanceador"
   vpc_id      = aws_vpc.main.id
+
+  #checkov:skip=CKV_AWS_260:La demo educativa necesita acceso HTTP publico al ALB y no dispone de dominio ni certificado TLS.
 
   ingress {
     description = "HTTP publico hacia el ALB"
@@ -14,9 +15,9 @@ resource "aws_security_group" "alb" {
   }
 
   egress {
-    description     = "Trafico del ALB solo hacia el puerto de la API"
-    from_port       = var.app_port
-    to_port         = var.app_port
+    description     = "HTTPS hacia las tareas de la API"
+    from_port       = 443
+    to_port         = 443
     protocol        = "tcp"
     security_groups = [aws_security_group.tasks.id]
   }
@@ -26,17 +27,16 @@ resource "aws_security_group" "alb" {
   }
 }
 
-#checkov:skip=CKV_AWS_382:Las tareas necesitan salida a ECR y CloudWatch; las subredes publicas evitan el costo de NAT Gateway.
 resource "aws_security_group" "tasks" {
   name        = "${local.name}-tasks"
   description = "Entrada a tareas solo desde el ALB"
   vpc_id      = aws_vpc.main.id
 
   egress {
-    description = "Salida para descargar imagenes y publicar logs sin NAT"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    description = "Salida HTTPS para ECR y CloudWatch"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
@@ -52,12 +52,4 @@ resource "aws_vpc_security_group_ingress_rule" "tasks_from_alb" {
   from_port                    = var.app_port
   to_port                      = var.app_port
   ip_protocol                  = "tcp"
-}
-
-#checkov:skip=CKV_AWS_382:Las tareas necesitan salida HTTPS a ECR y CloudWatch; las subredes publicas evitan el costo de NAT Gateway.
-resource "aws_vpc_security_group_egress_rule" "tasks_internet" {
-  security_group_id = aws_security_group.tasks.id
-  description       = "Salida requerida para descargar imagenes y publicar logs sin NAT"
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
 }
