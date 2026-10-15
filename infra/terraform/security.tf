@@ -1,10 +1,7 @@
-
 resource "aws_security_group" "alb" {
   name        = "${local.name}-alb"
   description = "Entrada HTTP publica al balanceador"
   vpc_id      = aws_vpc.main.id
-
-  #checkov:skip=CKV_AWS_260:La demo educativa necesita acceso HTTP publico al ALB y no dispone de dominio ni certificado TLS.
 
   ingress {
     description = "HTTP publico hacia el ALB"
@@ -14,13 +11,15 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  #checkov:skip=CKV_AWS_260:La demo educativa necesita acceso HTTP publico al ALB y no dispone de dominio ni certificado TLS.
+
   egress {
-  description     = "Trafico del ALB hacia el puerto de la API"
-  from_port       = var.app_port
-  to_port         = var.app_port
-  protocol        = "tcp"
-  security_groups = [aws_security_group.tasks.id]
-}
+    description     = "Trafico del ALB hacia el puerto de la API"
+    from_port       = var.app_port
+    to_port         = var.app_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.tasks.id]
+  }
 
   tags = {
     Name = "${local.name}-alb"
