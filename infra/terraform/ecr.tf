@@ -1,15 +1,10 @@
-#checkov:skip=CKV_AWS_51:Se requiere la etiqueta mutable latest para el primer despliegue didáctico; las imágenes también se publican etiquetadas con el SHA.
+
 resource "aws_ecr_repository" "api" {
   name                 = "${local.name}-api"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = true
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
+  image_tag_mutability = "IMMUTABLE"
 
   encryption_configuration {
-    encryption_type = "AES256"
+    encryption_type = "KMS"
   }
 
   tags = {
@@ -23,7 +18,7 @@ resource "aws_ecr_lifecycle_policy" "api" {
   policy = jsonencode({
     rules = [{
       rulePriority = 1
-      description  = "Conservar las diez imágenes más recientes"
+      description  = "Conservar las diez imagenes mas recientes"
       selection = {
         tagStatus   = "any"
         countType   = "imageCountMoreThan"
@@ -35,3 +30,4 @@ resource "aws_ecr_lifecycle_policy" "api" {
     }]
   })
 }
+
