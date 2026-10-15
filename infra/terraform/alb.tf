@@ -1,5 +1,4 @@
-#checkov:skip=CKV_AWS_91:No se crea un bucket adicional para los logs de acceso en este taller de bajo costo.
-#checkov:skip=CKV_AWS_150:Se permite destruir explícitamente los recursos de laboratorio desde el workflow manual.
+
 resource "aws_lb" "api" {
   name                       = substr("${local.name}-alb", 0, 32)
   internal                   = false
@@ -7,6 +6,12 @@ resource "aws_lb" "api" {
   security_groups            = [aws_security_group.alb.id]
   subnets                    = aws_subnet.public[*].id
   enable_deletion_protection = false
+  drop_invalid_header_fields = true
+
+  #checkov:skip=CKV_AWS_91:El taller de bajo costo no crea un bucket adicional para los logs de acceso.
+  #checkov:skip=CKV_AWS_150:Se permite destruir los recursos del laboratorio mediante el workflow manual.
+  #checkov:skip=CKV2_AWS_28:El taller educativo no incluye AWS WAF para evitar recursos adicionales.
+  #checkov:skip=CKV2_AWS_20:No hay dominio ni certificado TLS configurado para redirigir HTTP a HTTPS.
 
   tags = {
     Name = "${local.name}-alb"
@@ -19,6 +24,8 @@ resource "aws_lb_target_group" "api" {
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = aws_vpc.main.id
+
+  #checkov:skip=CKV_AWS_378:El taller utiliza HTTP entre el ALB y la API; no hay TLS configurado en la aplicación.
 
   health_check {
     enabled             = true
@@ -36,11 +43,14 @@ resource "aws_lb_target_group" "api" {
   }
 }
 
-#checkov:skip=CKV_AWS_2:El taller no dispone de dominio ni certificado TLS; no usar HTTP para datos sensibles ni producción.
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.api.arn
   port              = 80
   protocol          = "HTTP"
+
+  #checkov:skip=CKV_AWS_2:No hay certificado TLS disponible para el taller.
+  #checkov:skip=CKV_AWS_103:No se puede configurar TLS 1.2 sin habilitar HTTPS y disponer de un certificado.
+  #checkov:skip=CKV2_AWS_20:No hay listener HTTPS al cual redirigir las solicitudes HTTP.
 
   default_action {
     type             = "forward"
