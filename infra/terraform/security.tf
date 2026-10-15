@@ -32,7 +32,8 @@ resource "aws_security_group" "tasks" {
   vpc_id      = aws_vpc.main.id
 
   egress {
-    description = "Salida requerida para descargar imágenes y publicar logs sin NAT"
+    
+description = "Salida para descargar imagenes y publicar logs sin NAT"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
