@@ -1,9 +1,14 @@
+
 resource "aws_ecs_cluster" "main" {
   name = "${local.name}-cluster"
 
   setting {
     name  = "containerInsights"
     value = "enabled"
+  }
+
+  tags = {
+    Name = "${local.name}-cluster"
   }
 }
 
@@ -21,15 +26,18 @@ resource "aws_ecs_task_definition" "api" {
       name      = "api"
       image     = "${aws_ecr_repository.api.repository_url}:${var.image_tag}"
       essential = true
+
       portMappings = [{
         containerPort = var.app_port
         hostPort      = var.app_port
         protocol      = "tcp"
       }]
+
       environment = [{
         name  = "APP_VERSION"
         value = var.image_tag
       }]
+
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -57,6 +65,8 @@ resource "aws_ecs_service" "api" {
     enable   = true
     rollback = true
   }
+
+  #checkov:skip=CKV_AWS_333:El laboratorio usa subredes publicas para evitar el costo de NAT Gateway y endpoints privados.
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
