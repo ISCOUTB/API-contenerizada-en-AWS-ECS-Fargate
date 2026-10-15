@@ -15,12 +15,12 @@ resource "aws_security_group" "alb" {
   }
 
   egress {
-    description     = "HTTPS hacia las tareas de la API"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.tasks.id]
-  }
+  description     = "Trafico del ALB hacia el puerto de la API"
+  from_port       = var.app_port
+  to_port         = var.app_port
+  protocol        = "tcp"
+  security_groups = [aws_security_group.tasks.id]
+}
 
   tags = {
     Name = "${local.name}-alb"
