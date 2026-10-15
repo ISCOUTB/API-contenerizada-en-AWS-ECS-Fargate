@@ -5,13 +5,15 @@ on:
     paths:
       - "infra/terraform/**"
       - ".github/workflows/infra-deploy.yml"
+
   push:
     branches:
-    - master
+      - master
       - main
     paths:
       - "infra/terraform/**"
       - ".github/workflows/infra-deploy.yml"
+
   workflow_dispatch:
     inputs:
       destroy:
@@ -28,6 +30,7 @@ jobs:
   terraform:
     name: Validar, revisar y operar Terraform
     runs-on: ubuntu-latest
+
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
@@ -81,7 +84,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Aplicar infraestructura en main
+      - name: Aplicar infraestructura en push
         if: github.event_name == 'push'
         working-directory: infra/terraform
         run: terraform apply -input=false -auto-approve
