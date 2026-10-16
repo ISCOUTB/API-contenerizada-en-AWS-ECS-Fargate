@@ -1,6 +1,19 @@
 # Taller 3: API contenerizada en AWS ECS Fargate — DOMUSNET
 
-API pequeña en FastAPI desplegada como contenedor en Amazon ECS Fargate. Terraform define la infraestructura y GitHub Actions automatiza pruebas, análisis de seguridad y despliegues mediante OIDC, sin access keys persistentes.
+API pequeña en FastAPI desplegada como contenedor en Amazon ECS Fargate. Terraform define la infraestructura y GitHub Actions automatiza pruebas, análisis de seguridad y despliegues mediante OIDC.
+
+## Estado actual del proyecto
+
+El repositorio ya muestra un avance sólido y consistente con un taller de despliegue en AWS. Hasta este momento se ha documentado y dejado preparado lo siguiente:
+
+- Aplicación FastAPI con endpoints básicos: `/health`, `/info` y `/`.
+- Contenedor Docker para la API.
+- Infraestructura como código en Terraform con VPC, subredes, ALB, ECS Fargate, ECR, logs y permisos IAM.
+- Bootstrap de Terraform para crear el bucket del estado y la confianza OIDC con GitHub Actions.
+- Workflows de GitHub para validar infra, desplegar app y escanear seguridad con Trivy/Checkov.
+- Documentación técnica en README y archivos Markdown dentro de `docs/`.
+
+Este proyecto está en una fase de preparación y validación de infraestructura: la base técnica está implementada y documentada, pero la evidencia final de ejecución real en AWS sigue siendo un punto pendiente de cumplimentar con capturas, URLs y resultados de despliegue.
 
 ## Arquitectura
 
@@ -16,7 +29,38 @@ flowchart LR
     GitHub --> State["S3<br/>estado cifrado y versionado"]
 ```
 
-El ALB atiende en HTTP y distribuye al puerto 8000 de las tareas. Las tareas se ejecutan en dos subredes públicas con IP pública, pero su security group solo admite tráfico entrante desde el ALB. No se usa NAT Gateway. El diseño es didáctico y no debe manejar datos sensibles ni considerarse listo para producción. Consulte [la explicación detallada](docs/arquitectura.md) y [las decisiones y limitaciones](docs/DECISIONES.md).
+El ALB atiende en HTTP y distribuye al puerto 8000 de las tareas. Las tareas se ejecutan en dos subredes públicas con IP pública, pero su security group solo admite tráfico entrante desde el ALB.
+
+## Avance implementado
+
+### 1. Aplicación
+
+- `app/main.py` expone los endpoints `/health`, `/info` y `/`.
+- El servicio registra solicitudes con logging y devuelve metadatos del servicio y del equipo.
+- `app/Dockerfile` establece el contenedor para la API FastAPI.
+
+### 2. Infraestructura
+
+- `infra/terraform/` incluye:
+  - VPC y redes.
+  - ALB y listener HTTP.
+  - ECS cluster y servicio Fargate.
+  - Repositorio ECR.
+  - IAM con rol OIDC para GitHub Actions.
+  - Logs de CloudWatch.
+  - Backend remoto S3 con bloqueo y cifrado.
+
+### 3. Seguridad y calidad
+
+- Se usa Checkov para validar infraestructura.
+- Se usa Trivy para escaneo de vulnerabilidades, secretos y configuración.
+- Los workflows fuerzan controles mínimos y uso de OIDC, evitando credenciales estáticas.
+
+### 4. Automatización
+
+- `app-deploy.yml`: prueba la app, construye imagen, escanea vulnerabilidades, publica en ECR y despliega a ECS.
+- `infra-deploy.yml`: valida Terraform, ejecuta Checkov y aplica/destroye infraestructura según corresponda.
+- `security-scan.yml`: escanea el repositorio y genera SARIF.
 
 ## Prerrequisitos
 
@@ -27,16 +71,15 @@ El ALB atiende en HTTP y distribuye al puerto 8000 de las tareas. Las tareas se 
 
 ## Orden de despliegue
 
-1. **Bootstrap local, una sola vez.** Siga [`infra/bootstrap/README.md`](infra/bootstrap/README.md). Elija un nombre globalmente único para `state_bucket_name`, aplique el módulo localmente y guarde de manera segura su estado local.
-2. **Configurar variables del repositorio.** Agregue `AWS_ROLE_ARN`, `AWS_REGION`, `TF_STATE_BUCKET` y `TF_STATE_KEY` como variables de Actions. La sección de configuración las describe. No agregue access keys.
-3. **Desplegar infraestructura.** Revise `infra/terraform/terraform.tfvars.example`; el workflow usa los valores por defecto o el archivo tfvars que se decida mantener localmente. Abra un pull request para validar formato, Terraform, Checkov y obtener un plan. Al integrar cambios de `infra/terraform/**` en `main`, Actions ejecuta `terraform apply`.
-4. **Publicar la aplicación.** El workflow se activa en `main` cuando cambia `app/**`; también se puede iniciar manualmente. Ejecuta pytest y escanea la imagen con Trivy antes de iniciar sesión en ECR y publicarla. Luego actualiza y espera la estabilidad del servicio ECS.
-
-La definición de tarea inicial apunta a `<URL-del-repositorio-ECR>:latest`. En la primera creación de infraestructura esa imagen aún podría no existir; ECS reintenta iniciar tareas y el primer workflow de la app publica `latest` y despliega una revisión con el SHA del commit. Si el circuit breaker declara fallida la revisión inicial, vuelva a ejecutar el workflow de aplicación una vez publicada la imagen.
+1. Bootstrap local, una sola vez. Siga [`infra/bootstrap/README.md`](infra/bootstrap/README.md).
+2. Configurar variables del repositorio: `AWS_ROLE_ARN`, `AWS_REGION`, `TF_STATE_BUCKET` y `TF_STATE_KEY`.
+3. Desplegar infraestructura desde el workflow de Terraform.
+4. Publicar la aplicación desde el workflow de la API.
+5. Verificar `GET /health` y `/info` desde el ALB.
 
 ## Configuración de GitHub
 
-Todas son **variables de repositorio** en Settings → Secrets and variables → Actions → Variables. No se requieren secrets de credenciales.
+Todas son variables de repositorio en Settings → Secrets and variables → Actions → Variables. No se requieren secrets de credenciales.
 
 | Nombre | Tipo | Valor |
 |---|---|---|
@@ -44,8 +87,6 @@ Todas son **variables de repositorio** en Settings → Secrets and variables →
 | `AWS_REGION` | Variable | Región de despliegue; por defecto `us-east-1` |
 | `TF_STATE_BUCKET` | Variable | Nombre del bucket S3 creado por el bootstrap |
 | `TF_STATE_KEY` | Variable | Clave del estado, por ejemplo `domusnet/ecs-fargate/terraform.tfstate` |
-
-El proveedor OIDC solo permite el repositorio definido en el bootstrap y los sujetos de `main`, `master` y `pull_request`. GitHub Actions recibe credenciales STS temporales.
 
 ## Variables de Terraform
 
@@ -61,8 +102,6 @@ El proveedor OIDC solo permite el repositorio definido en el bootstrap y los suj
 | `memory` | `512` | Memoria Fargate en MiB |
 | `log_retention_days` | `7` | Retención CloudWatch |
 | `image_tag` | `latest` | Imagen usada por la task definition inicial |
-
-El backend S3 no recibe credenciales en Terraform: `bucket`, `key` y `region` se inyectan con `-backend-config` desde las variables del repositorio.
 
 ## API y verificación
 
@@ -86,31 +125,36 @@ uvicorn main:app --reload
 
 ## Workflows y controles
 
-- **`app-deploy.yml`:** para cambios en `app/**` en `main` o ejecución manual. Corre pytest, construye tags SHA y `latest`, analiza la imagen con Trivy (HIGH/CRITICAL, sin publicar si falla), inicia sesión OIDC en ECR, publica y despliega la revisión ECS; espera estabilidad y prueba `/health`.
-- **`infra-deploy.yml`:** para cambios en `infra/terraform/**`, pull request, push a `main` o ejecución manual. Ejecuta `terraform fmt -check`, `init`, `validate` y Checkov. En PR publica un plan en el resumen; en `main` aplica y presenta outputs. La opción manual `destroy` inicia la destrucción controlada de la infraestructura principal.
-- **`security-scan.yml`:** en pull request y push a `main`, escanea el sistema de archivos por vulnerabilidades, secretos y misconfiguraciones; almacena el resultado SARIF como artefacto.
+- `app-deploy.yml`: ejecuta pruebas, construye y publica la imagen, y despliega la API en ECS.
+- `infra-deploy.yml`: valida Terraform, ejecuta Checkov y aplica infraestructura.
+- `security-scan.yml`: escanea el código con Trivy.
 
-Se fijan versiones de las Actions, los workflows declaran permisos mínimos (`contents: read` y, donde se asume el rol, `id-token: write`) y usan OIDC, nunca access keys. Checkov se ejecuta antes de plan/aplicación; las excepciones justificadas están anotadas en Terraform y en [`docs/DECISIONES.md`](docs/DECISIONES.md). Los recursos etiquetables reciben `Team`, `Project` y `Environment` mediante `default_tags`. ECR cifra imágenes, analiza al publicar y conserva las diez más recientes.
+Se fijan versiones de las Actions y se usan permisos mínimos. Checkov y Trivy se ejecutan antes de desplegar, y se evita almacenaje de credenciales por medio de OIDC.
 
-## Demostración y evidencias
+## Evidencias y cierre del taller
 
-1. Cambie una respuesta o metadato de la API en `app/`, integre a `main` y capture pruebas, ejecución de Trivy, SHA y respuesta actualizada.
-2. Modifique una propiedad de `infra/terraform/`, abra PR y capture el plan; al integrar, capture la aplicación y sus outputs.
-3. Consulte las ejecuciones de los tres workflows y adjunte el artefacto SARIF y el resumen Checkov. No publique credenciales ni datos sensibles.
-4. Compruebe que la API sigue accesible y que `/health` responde `200` después de desplegar una imagen nueva.
-5. Revise el grupo `/ecs/domusnet-api-dev-api` en CloudWatch Logs.
+El proyecto ya dispone de la estructura y de la documentación teórica necesaria para el taller, pero el cierre formal requiere evidencia operativa real. Debe documentarse al menos:
 
-Use la plantilla de [`docs/EVIDENCIAS.md`](docs/EVIDENCIAS.md) para reunir capturas y enlaces.
+1. URL pública del ALB tras despliegue.
+2. Respuesta de `/health` y `/info`.
+3. SHA de la imagen publicada en ECR.
+4. Resultado del análisis Trivy.
+5. Resultado del plan de Terraform o ejecución real.
+6. Capturas de CloudWatch y del workflow ejecutado.
+
+Use la plantilla de [`docs/EVIDENCIAS.md`](docs/EVIDENCIAS.md) para documentar este cierre.
 
 ## Destrucción y limpieza
 
-1. Ejecute `infra-deploy.yml` manualmente con `destroy=true` y confirme que el entorno de laboratorio se puede eliminar. Esto destruye los recursos principales y el repositorio ECR (incluidas sus imágenes por `force_delete`), pero no elimina el bucket bootstrap.
-2. Confirme en AWS que ALB, servicio/cluster ECS, VPC, ECR y log group se eliminaron.
-3. Si el equipo decide retirar también el bootstrap, hágalo manualmente desde `infra/bootstrap` con las credenciales del equipo después de retirar el estado principal y verificar que ningún workflow lo necesita. `prevent_destroy` protege el bucket; no lo elimine por accidente.
-4. Antes de eliminar el bucket de estado, borre de forma consciente todas sus versiones y delete markers: versionado conserva objetos anteriores incluso si se borra el objeto actual. Luego elimine el bucket y el proveedor/rol OIDC si ya no se necesitan.
-
-No se ejecutan comandos de AWS ni de destrucción como parte de este repositorio; el equipo debe revisar planes y recursos antes de confirmar la limpieza.
+1. Ejecutar `infra-deploy.yml` con `destroy=true` si se desea eliminar el entorno de laboratorio.
+2. Confirmar en AWS la eliminación del ALB, ECS, VPC y ECR.
+3. Revisar el bucket S3 del estado antes de borrarlo, teniendo en cuenta versiones y delete markers.
 
 ## Costos y control
 
-Fargate en 256 CPU / 512 MiB con una tarea y CloudWatch de siete días mantiene bajo el consumo, pero **el ALB tiene costo fijo por hora más cargos por LCU** y continúa facturando incluso sin tráfico. El importe depende de región, horas y tráfico; en regiones como `us-east-1`, el componente horario del ALB suele ser del orden de **USD 16–20 al mes** si permanece encendido todo el mes, antes de LCU, Fargate, transferencia y logs. Verifique precios actuales en la calculadora oficial de AWS. Para limitar costos, destruya los recursos de laboratorio al terminar, no use NAT Gateway, conserve la retención breve y aplique la política de ciclo de vida de ECR.
+Fargate en 256 CPU / 512 MiB con una tarea y CloudWatch de siete días mantiene bajo el consumo, pero el ALB tiene costo fijo por hora más cargos por LCU; por tanto, la infraestructura debe destruirse cuando termine el laboratorio.
+
+## Conclusión
+
+La base funcional del proyecto está avanzada y documentada. La decisión más importante ahora es cerrar la validación real en AWS con evidencias concretas para demostrar el flujo completo: infraestructura, despliegue, seguridad y disponibilidad.
+
