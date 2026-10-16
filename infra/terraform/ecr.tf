@@ -1,4 +1,5 @@
 
+#trivy:ignore:AVD-AWS-0031:El tag latest debe sobrescribirse para la definicion de tarea inicial; cada version queda identificada por su SHA.
 resource "aws_ecr_repository" "api" {
   name = "${local.name}-api"
   #checkov:skip=CKV_AWS_51:El tag latest debe sobrescribirse en cada publicacion para la definicion de tarea inicial; cada version queda identificada ademas por su SHA.

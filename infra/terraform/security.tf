@@ -27,6 +27,7 @@ resource "aws_vpc_security_group_egress_rule" "alb_to_tasks" {
   ip_protocol                  = "tcp"
 }
 
+#trivy:ignore:AVD-AWS-0104:Sin NAT ni endpoints privados, las tareas requieren salida a ECR (443) y DNS (53); egreso acotado por puerto.
 resource "aws_security_group" "tasks" {
   name        = "${local.name}-tasks"
   description = "Entrada a tareas solo desde el ALB"

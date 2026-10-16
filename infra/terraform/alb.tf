@@ -1,4 +1,5 @@
 
+#trivy:ignore:AVD-AWS-0053:ALB publico por diseno para la demo sin dominio; el ingreso a tareas sigue restringido al ALB.
 resource "aws_lb" "api" {
   name                       = substr("${local.name}-alb", 0, 32)
   internal                   = false
@@ -43,6 +44,7 @@ resource "aws_lb_target_group" "api" {
   }
 }
 
+#trivy:ignore:AVD-AWS-0054:Sin certificado TLS disponible para el taller; la API no maneja datos sensibles.
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.api.arn
   port              = 80

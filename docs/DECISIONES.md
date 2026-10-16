@@ -15,6 +15,7 @@
 - **Sin permisos de aplicación:** el task role no tiene políticas porque esta API no llama a otros servicios AWS. El execution role tiene únicamente permisos para descargar del repositorio ECR y escribir en el grupo de logs.
 - **Estado remoto y OIDC:** el estado usa S3 cifrado/versionado con bloqueo nativo `use_lockfile`; el rol de Actions confía solo en el repositorio del equipo, las ramas `main` y `master` y el sujeto `pull_request`. Las credenciales son temporales.
 - **Retención corta de logs:** los grupos de CloudWatch usan `var.log_retention_days` (7 días por defecto) para controlar costos; se exceptúa `CKV_AWS_338` en `logs.tf` porque no se almacenan datos sensibles ni de auditoría.
+- **Excepciones aceptadas en Trivy (fs, HIGH/CRITICAL):** las 7 corresponden a decisiones del taller y llevan `#trivy:ignore` en el código: ALB público (`AVD-AWS-0053`) y listener HTTP (`AVD-AWS-0054`) por falta de dominio/certificado; ECR mutable (`AVD-AWS-0031`) por el tag `latest` inicial; egreso 443+DNS de tareas (`AVD-AWS-0104` ×3) por ausencia de NAT; y bucket de estado con SSE-S3 en vez de KMS propio (`AVD-AWS-0132`) para no sumar costo. Dependencias (`requirements.txt`) y secretos: 0 hallazgos.
 
 ## Limitaciones conocidas
 
