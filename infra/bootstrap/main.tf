@@ -105,10 +105,15 @@ resource "aws_iam_role" "github_actions" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
+          # GitHub emite el sub en formato simple o con IDs numericos
+          # (owner@id/repo@id); se aceptan ambos para main, master y PR.
           "token.actions.githubusercontent.com:sub" = [
             "repo:${local.github_repository}:ref:refs/heads/main",
             "repo:${local.github_repository}:ref:refs/heads/master",
-            "repo:${local.github_repository}:pull_request"
+            "repo:${local.github_repository}:pull_request",
+            "repo:ISCOUTB@9059274/API-contenerizada-en-AWS-ECS-Fargate@1421321751:ref:refs/heads/main",
+            "repo:ISCOUTB@9059274/API-contenerizada-en-AWS-ECS-Fargate@1421321751:ref:refs/heads/master",
+            "repo:ISCOUTB@9059274/API-contenerizada-en-AWS-ECS-Fargate@1421321751:pull_request"
           ]
         }
       }
