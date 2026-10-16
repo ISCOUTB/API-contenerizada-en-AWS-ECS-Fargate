@@ -20,11 +20,17 @@ resource "aws_lb" "api" {
 }
 
 resource "aws_lb_target_group" "api" {
-  name        = substr("${local.name}-tg", 0, 32)
+  # Nombre distinto al historico "-tg": permite create_before_destroy para
+  # reemplazar sin caidas (el TG viejo se elimina tras re-apuntar el listener).
+  name        = substr("${local.name}-api-tg", 0, 32)
   port        = var.app_port
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = aws_vpc.main.id
+
+  lifecycle {
+    create_before_destroy = true
+  }
 
   #checkov:skip=CKV_AWS_378:El taller utiliza HTTP entre el ALB y la API; no hay TLS configurado en la aplicación.
 

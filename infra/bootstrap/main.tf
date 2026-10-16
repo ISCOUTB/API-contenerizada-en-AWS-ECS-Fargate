@@ -177,6 +177,7 @@ resource "aws_iam_role_policy" "github_actions" {
           "ecr:ListTagsForResource",
           "ecr:PutImage",
           "ecr:PutImageScanningConfiguration",
+          "ecr:PutImageTagMutability",
           "ecr:PutLifecyclePolicy",
           "ecr:UploadLayerPart",
           "ecr:TagResource",
@@ -290,6 +291,8 @@ resource "aws_iam_role_policy" "github_actions" {
         Sid    = "CloudWatchLogsManagement"
         Effect = "Allow"
         Action = [
+          "logs:AssociateKmsKey",
+          "logs:DisassociateKmsKey",
           "logs:CreateLogGroup",
           "logs:DeleteLogGroup",
           "logs:DeleteRetentionPolicy",
