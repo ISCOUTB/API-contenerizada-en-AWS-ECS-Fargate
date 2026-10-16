@@ -13,17 +13,18 @@ resource "aws_security_group" "alb" {
 
   #checkov:skip=CKV_AWS_260:La demo educativa necesita acceso HTTP publico al ALB y no dispone de dominio ni certificado TLS.
 
-  egress {
-    description     = "Trafico del ALB hacia el puerto de la API"
-    from_port       = var.app_port
-    to_port         = var.app_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.tasks.id]
-  }
-
   tags = {
     Name = "${local.name}-alb"
   }
+}
+
+resource "aws_vpc_security_group_egress_rule" "alb_to_tasks" {
+  security_group_id            = aws_security_group.alb.id
+  description                  = "Trafico del ALB hacia el puerto de la API"
+  referenced_security_group_id = aws_security_group.tasks.id
+  from_port                    = var.app_port
+  to_port                      = var.app_port
+  ip_protocol                  = "tcp"
 }
 
 resource "aws_security_group" "tasks" {
@@ -35,6 +36,22 @@ resource "aws_security_group" "tasks" {
     description = "Salida HTTPS para ECR y CloudWatch"
     from_port   = 443
     to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "DNS UDP hacia el resolver de la VPC (ECR y CloudWatch)"
+    from_port   = 53
+    to_port     = 53
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "DNS TCP hacia el resolver de la VPC (respuestas extensas)"
+    from_port   = 53
+    to_port     = 53
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }

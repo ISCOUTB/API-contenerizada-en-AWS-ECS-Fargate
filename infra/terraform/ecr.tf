@@ -1,7 +1,9 @@
 
 resource "aws_ecr_repository" "api" {
-  name                 = "${local.name}-api"
-  image_tag_mutability = "IMMUTABLE"
+  name = "${local.name}-api"
+  #checkov:skip=CKV_AWS_51:El tag latest debe sobrescribirse en cada publicacion para la definicion de tarea inicial; cada version queda identificada ademas por su SHA.
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
 
   encryption_configuration {
     encryption_type = "KMS"

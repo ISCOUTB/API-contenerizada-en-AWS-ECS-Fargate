@@ -64,7 +64,7 @@ variable "memory" {
 variable "log_retention_days" {
   description = "Retención de los logs de CloudWatch."
   type        = number
-  default     = 365
+  default     = 7
 }
 
 variable "image_tag" {

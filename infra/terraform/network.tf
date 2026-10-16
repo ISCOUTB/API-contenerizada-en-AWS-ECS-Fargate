@@ -1,7 +1,16 @@
 
+data "aws_availability_zones" "available" {
+  state = "available"
+
+  filter {
+    name   = "zone-name"
+    values = ["${var.aws_region}a", "${var.aws_region}b"]
+  }
+}
+
 locals {
   name               = "${var.project_name}-${var.environment}"
-  availability_zones = ["${var.aws_region}a", "${var.aws_region}b"]
+  availability_zones = slice(data.aws_availability_zones.available.names, 0, 2)
 }
 
 resource "aws_vpc" "main" {

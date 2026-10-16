@@ -23,7 +23,7 @@ El ALB atiende en HTTP y distribuye al puerto 8000 de las tareas. Las tareas se 
 - Cuenta AWS y permisos locales del equipo para aplicar una vez `infra/bootstrap`.
 - Terraform 1.10 o posterior, AWS CLI configurado localmente para el bootstrap y Docker.
 - Repositorio GitHub `ISCOUTB/API-contenerizada-en-AWS-ECS-Fargate` y acceso para configurar variables y ejecutar Actions.
-- Las acciones de GitHub requieren que la confianza OIDC corresponda a ese repositorio y a la rama `main`.
+- Las acciones de GitHub requieren que la confianza OIDC corresponda a ese repositorio y a las ramas `main`/`master`.
 
 ## Orden de despliegue
 
@@ -45,7 +45,7 @@ Todas son **variables de repositorio** en Settings → Secrets and variables →
 | `TF_STATE_BUCKET` | Variable | Nombre del bucket S3 creado por el bootstrap |
 | `TF_STATE_KEY` | Variable | Clave del estado, por ejemplo `domusnet/ecs-fargate/terraform.tfstate` |
 
-El proveedor OIDC solo permite el repositorio definido en el bootstrap y los sujetos de `main` y `pull_request`. GitHub Actions recibe credenciales STS temporales.
+El proveedor OIDC solo permite el repositorio definido en el bootstrap y los sujetos de `main`, `master` y `pull_request`. GitHub Actions recibe credenciales STS temporales.
 
 ## Variables de Terraform
 

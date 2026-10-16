@@ -56,8 +56,9 @@ resource "aws_kms_alias" "logs" {
 }
 
 resource "aws_cloudwatch_log_group" "api" {
+  #checkov:skip=CKV_AWS_338:Retencion corta (var.log_retention_days, 7 dias por defecto) para controlar costos del laboratorio; no se almacenan datos sensibles ni de auditoria.
   name              = "/ecs/${local.name}-api"
-  retention_in_days = 365
+  retention_in_days = var.log_retention_days
   kms_key_id        = aws_kms_key.logs.arn
 
   tags = {
@@ -66,8 +67,9 @@ resource "aws_cloudwatch_log_group" "api" {
 }
 
 resource "aws_cloudwatch_log_group" "flow" {
+  #checkov:skip=CKV_AWS_338:Retencion corta (var.log_retention_days, 7 dias por defecto) para controlar costos del laboratorio; no se almacenan datos sensibles ni de auditoria.
   name              = "/vpc/${local.name}-flow"
-  retention_in_days = 365
+  retention_in_days = var.log_retention_days
   kms_key_id        = aws_kms_key.logs.arn
 
   tags = {
