@@ -43,6 +43,13 @@ jobs:
       - name: Configurar Terraform
         uses: hashicorp/setup-terraform@v3.1.2
 
+      # TEMPORAL-DEBUG-OIDC: eliminar tras diagnosticar el AssumeRole.
+      - name: Depurar claims OIDC (temporal)
+        run: |
+          RESP=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          TOKEN=$(echo "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['value'])")
+          echo "$TOKEN" | cut -d. -f2 | python3 -c "import base64,sys,json; s=sys.stdin.read().strip(); print(json.dumps(json.loads(base64.urlsafe_b64decode(s + '=' * (-len(s) % 4))), indent=2))"
+
       - name: Configurar credenciales AWS con OIDC
         uses: aws-actions/configure-aws-credentials@v4.2.1
         with:
