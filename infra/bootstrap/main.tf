@@ -305,6 +305,14 @@ resource "aws_iam_role_policy" "github_actions" {
         ]
       },
       {
+        Sid    = "CloudWatchLogsDiscovery"
+        Effect = "Allow"
+        Action = [
+          "logs:DescribeLogGroups"
+        ]
+        Resource = "*"
+      },
+      {
         Sid    = "TaskRolesManagement"
         Effect = "Allow"
         Action = [
@@ -315,6 +323,9 @@ resource "aws_iam_role_policy" "github_actions" {
           "iam:DeleteRolePolicy",
           "iam:GetRolePolicy",
           "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies",
+          "iam:ListInstanceProfilesForRole",
+          "iam:ListRoleTags",
           "iam:TagRole",
           "iam:UntagRole"
         ]
