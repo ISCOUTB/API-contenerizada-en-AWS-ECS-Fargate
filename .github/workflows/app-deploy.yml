@@ -79,7 +79,7 @@ jobs:
             ${{ steps.infra.outputs.ecr_repository_url }}:latest
 
       - name: Analizar imagen con Trivy antes de publicarla
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.infra.outputs.ecr_repository_url }}:${{ github.sha }}
           format: table
