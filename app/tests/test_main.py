@@ -27,4 +27,4 @@ def test_welcome():
     response = client.get("/")
 
     assert response.status_code == 200
-    assert response.json() == {"message": "API de DOMUSNET lista"}
+    assert response.json() == {"message": "API de DOMUSNET lista, esto es una prueba para validar que funciona"}
