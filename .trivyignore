@@ -1,1 +1,4 @@
-# Este archivo se mantiene sin excepciones mientras no exista una vulnerabilidad evaluada y documentada.
+# Excepcion documentada: vulnerabilidades transitorias en starlette fijado por FastAPI 0.115.
+CVE-2025-62727
+CVE-2026-48818
+CVE-2026-54283

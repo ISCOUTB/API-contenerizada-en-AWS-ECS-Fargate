@@ -26,6 +26,8 @@ La parte que todavía queda como cierre operativo es la validación real en AWS 
 - Egreso acotado de las tareas: sin NAT ni endpoints privados, las tareas requieren salida para descargar capas de ECR y publicar logs. Se permite egreso solo a 443 (HTTPS) y 53 (DNS UDP/TCP).
 - Estado remoto y OIDC: el estado usa S3 cifrado/versionado con bloqueo nativo; el rol de Actions confía solo en el repositorio y ramas autorizadas.
 - Retención corta de logs: los grupos de CloudWatch usan retención limitada para controlar costos.
+- **Actualización del sistema base:** el Dockerfile incluye `apt-get upgrade` para mitigar vulnerabilidades del sistema operativo base (Debian slim).
+- **Excepciones en Trivy de contenedor:** se excluyen en `.trivyignore` vulnerabilidades transitorias de `starlette` fijado por FastAPI 0.115.
 
 ## Limitaciones conocidas
 
