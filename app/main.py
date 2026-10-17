@@ -48,4 +48,4 @@ def info():
 
 @app.get("/")
 def welcome():
-    return {"message": "API de DOMUSNET lista"}
+    return {"message": "API de DOMUSNET lista, esto es una prueba para validar que funciona"}
