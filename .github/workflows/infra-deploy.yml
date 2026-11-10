@@ -1,7 +1,11 @@
+
 name: Validar y desplegar infraestructura
 
 on:
   pull_request:
+    branches:
+      - master
+      - main
     paths:
       - "infra/terraform/**"
       - ".github/workflows/infra-deploy.yml"
@@ -17,52 +21,50 @@ on:
   workflow_dispatch:
     inputs:
       destroy:
-        description: "Destruir la infraestructura principal (no elimina el bucket bootstrap)"
+        description: "Destruir la infraestructura principal"
         required: false
         type: boolean
         default: false
+      confirm_destroy:
+        description: "Escribe DESTROY DOMUSNET para confirmar"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
-  id-token: write
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  terraform:
-    name: Validar, revisar y operar Terraform
-    runs-on: ubuntu-latest
 
-    env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+  # 1. Validaciones sin acceso a AWS
+  validate:
+    name: Validar Terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Obtener el código
         uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Configurar Terraform
         uses: hashicorp/setup-terraform@v3.1.2
-
-      - name: Configurar credenciales AWS con OIDC
-        uses: aws-actions/configure-aws-credentials@v4.2.1
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          terraform_version: 1.16.4
 
-      - name: Verificar formato de Terraform
+      - name: Verificar formato
         run: terraform fmt -check -recursive infra/terraform
 
-      - name: Inicializar Terraform
-        working-directory: infra/terraform
-        run: |
-          terraform init -input=false -reconfigure \
-            -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="key=${TF_STATE_KEY}" \
-            -backend-config="region=${AWS_REGION}"
+      - name: Inicializar sin backend remoto
+        run: terraform -chdir=infra/terraform init -backend=false -input=false -lockfile=readonly
 
       - name: Validar configuración
-        working-directory: infra/terraform
-        run: terraform validate
+        run: terraform -chdir=infra/terraform validate
 
       - name: Analizar infraestructura con Checkov
         uses: bridgecrewio/checkov-action@v12.2811.0
@@ -71,48 +73,182 @@ jobs:
           quiet: true
           soft_fail: false
 
-      - name: Crear plan para Pull Request
-        if: github.event_name == 'pull_request'
+  # 2. Plan y aplicación automática después de integrar cambios
+  deploy:
+    name: Plan y aplicar infraestructura
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' &&
+      !inputs.destroy &&
+      (github.ref == 'refs/heads/master' ||
+      github.ref == 'refs/heads/main'))
+
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Requiere aprobación en GitHub antes del despliegue
+    environment: aws-infrastructure
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+
+    steps:
+      - name: Obtener el código
+        uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Configurar Terraform
+        uses: hashicorp/setup-terraform@v3.1.2
+        with:
+          terraform_version: 1.16.4
+
+      - name: Comprobar variables requeridas
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in AWS_ROLE_ARN AWS_REGION TF_STATE_BUCKET TF_STATE_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Falta configurar la variable ${name} en GitHub."
+              exit 1
+            fi
+          done
+
+      - name: Configurar credenciales AWS con OIDC
+        uses: aws-actions/configure-aws-credentials@v4.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: DOMUSNET-Terraform-${{ github.run_id }}
+
+      - name: Verificar identidad AWS
+        run: aws sts get-caller-identity
+
+      - name: Inicializar Terraform con backend remoto
         working-directory: infra/terraform
         run: |
-          terraform plan -input=false -no-color -out=tfplan
+          terraform init -input=false -reconfigure -lockfile=readonly \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: Generar Terraform plan
+        working-directory: infra/terraform
+        run: |
+          terraform plan -input=false -no-color -lock-timeout=5m -out=tfplan
           terraform show -no-color tfplan > plan.txt
+
           {
             echo "## Plan de Terraform"
-            echo '```terraform'
-            cat plan.txt
-            echo '```'
+            echo ""
+            grep -E '^Plan:|^No changes' plan.txt || true
+            echo ""
+            echo "El plan se aplicará en el siguiente paso."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Aplicar infraestructura en push
-        if: github.event_name == 'push'
+      - name: Aplicar el plan generado
         working-directory: infra/terraform
-        run: terraform apply -input=false -auto-approve
-
-      - name: Destruir infraestructura por solicitud explícita
-        if: github.event_name == 'workflow_dispatch' && inputs.destroy
-        working-directory: infra/terraform
-        run: terraform destroy -input=false -auto-approve
-
-      - name: Aplicar desde ejecución manual
-        if: github.event_name == 'workflow_dispatch' && !inputs.destroy
-        working-directory: infra/terraform
-        run: terraform apply -input=false -auto-approve
+        run: terraform apply -input=false tfplan
 
       - name: Publicar outputs de infraestructura
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         working-directory: infra/terraform
         run: |
           {
             echo "## Outputs de infraestructura"
-            echo
-            if [[ "${{ inputs.destroy }}" == "true" ]]; then
-              echo "La infraestructura principal fue destruida. El bucket bootstrap permanece."
-            else
-              echo "- URL pública: $(terraform output -raw api_url)"
-              echo "- Repositorio ECR: $(terraform output -raw ecr_repository_url)"
-              echo "- Clúster ECS: $(terraform output -raw ecs_cluster_name)"
-              echo "- Servicio ECS: $(terraform output -raw ecs_service_name)"
-              echo "- Grupo de logs: $(terraform output -raw log_group_name)"
-            fi
+            echo ""
+            echo "- URL pública: $(terraform output -raw api_url)"
+            echo "- Repositorio ECR: $(terraform output -raw ecr_repository_url)"
+            echo "- Clúster ECS: $(terraform output -raw ecs_cluster_name)"
+            echo "- Servicio ECS: $(terraform output -raw ecs_service_name)"
+            echo "- Grupo de logs: $(terraform output -raw log_group_name)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # 3. Destrucción únicamente mediante solicitud manual
+  destroy:
+    name: Destruir infraestructura (manual)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.destroy &&
+      (github.ref == 'refs/heads/master' ||
+      github.ref == 'refs/heads/main')
+
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # También requiere aprobación antes de destruir recursos
+    environment: aws-infrastructure
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+
+    steps:
+      - name: Confirmar destrucción
+        env:
+          CONFIRM_DESTROY: ${{ inputs.confirm_destroy }}
+        shell: bash
+        run: |
+          if [[ "$CONFIRM_DESTROY" != "DESTROY DOMUSNET" ]]; then
+            echo "::error::Confirmación incorrecta. No se destruirá la infraestructura."
+            exit 1
+          fi
+
+      - name: Obtener el código
+        uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Configurar Terraform
+        uses: hashicorp/setup-terraform@v3.1.2
+        with:
+          terraform_version: 1.16.4
+
+      - name: Comprobar variables requeridas
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in AWS_ROLE_ARN AWS_REGION TF_STATE_BUCKET TF_STATE_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Falta configurar la variable ${name} en GitHub."
+              exit 1
+            fi
+          done
+
+      - name: Configurar credenciales AWS con OIDC
+        uses: aws-actions/configure-aws-credentials@v4.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: DOMUSNET-Terraform-Destroy-${{ github.run_id }}
+
+      - name: Verificar identidad AWS
+        run: aws sts get-caller-identity
+
+      - name: Inicializar Terraform
+        working-directory: infra/terraform
+        run: |
+          terraform init -input=false -reconfigure -lockfile=readonly \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: Destruir infraestructura
+        working-directory: infra/terraform
+        run: terraform destroy -input=false -auto-approve -lock-timeout=5m

@@ -56,11 +56,96 @@ El ALB atiende en HTTP y distribuye al puerto 8000 de las tareas. Las tareas se 
 - Se usa Trivy para escaneo de vulnerabilidades, secretos y configuración.
 - Los workflows fuerzan controles mínimos y uso de OIDC, evitando credenciales estáticas.
 
+
 ### 4. Automatización
 
-- `app-deploy.yml`: prueba la app, construye imagen, escanea vulnerabilidades, publica en ECR y despliega a ECS.
-- `infra-deploy.yml`: valida Terraform, ejecuta Checkov y aplica/destroye infraestructura según corresponda.
-- `security-scan.yml`: escanea el repositorio y genera SARIF.
+El proyecto utiliza GitHub Actions para automatizar la validación de infraestructura, la publicación de la aplicación y los análisis de seguridad.
+
+Se utilizan tres workflows independientes:
+
+#### 4.1. Infraestructura: infra-deploy.yml
+
+Archivo: `.github/workflows/infra-deploy.yml`
+
+Este workflow administra los recursos de AWS definidos mediante Terraform.
+
+Se divide en tres trabajos:
+
+**validate — Validación**
+
+Se ejecuta cuando se crea un Pull Request que modifica la infraestructura.
+
+Realiza las siguientes comprobaciones:
+
+- Descarga el código del repositorio.
+- Configura Terraform.
+- Verifica el formato con `terraform fmt`.
+- Inicializa los proveedores sin utilizar el backend remoto.
+- Comprueba la configuración con `terraform validate`.
+- Analiza los archivos de infraestructura con Checkov.
+
+Este trabajo no necesita credenciales de AWS.
+
+**deploy — Despliegue**
+
+Se ejecuta cuando los cambios se integran en las ramas principales configuradas o cuando se solicita una ejecución manual autorizada.
+
+Sus pasos son:
+
+1. Comprueba las variables necesarias de GitHub.
+2. Obtiene credenciales temporales de AWS mediante OIDC.
+3. Verifica la identidad con AWS STS.
+4. Inicializa Terraform utilizando el backend remoto de S3.
+5. Ejecuta `terraform plan`.
+6. Aplica el mismo plan generado mediante `terraform apply`.
+7. Publica los outputs de infraestructura.
+
+El trabajo utiliza el entorno protegido `aws-infrastructure`, que permite solicitar aprobación antes de comenzar el despliegue.
+
+**destroy — Destrucción manual**
+
+Permite eliminar la infraestructura principal mediante una ejecución manual del workflow.
+
+Requiere seleccionar la opción de destrucción, escribir la confirmación `DESTROY DOMUSNET` y obtener la aprobación del entorno protegido.
+
+Esta operación no debe utilizarse durante los despliegues habituales. El bucket utilizado por el bootstrap debe conservarse mientras el equipo dependa del estado remoto.
+
+#### 4.2. Aplicación: app-deploy.yml
+
+Archivo: `.github/workflows/app-deploy.yml`
+
+Este workflow automatiza la publicación de la API en AWS.
+
+Su funcionamiento contempla:
+
+- Ejecución de pruebas de Python.
+- Construcción de la imagen Docker.
+- Análisis de seguridad de la imagen con Trivy.
+- Publicación de la imagen en Amazon ECR.
+- Actualización de la definición de tarea de ECS.
+- Despliegue del servicio en Fargate.
+- Comprobación de disponibilidad de la aplicación.
+
+#### 4.3. Seguridad: security-scan.yml
+
+Archivo: `.github/workflows/security-scan.yml`
+
+Realiza análisis de seguridad del repositorio mediante Trivy.
+
+Permite detectar vulnerabilidades, secretos expuestos y problemas de configuración.
+
+Los resultados se almacenan como un artefacto SARIF para facilitar su revisión.
+
+#### 4.4. Flujo general de CI/CD
+
+El proceso de infraestructura comienza con una modificación en Terraform y una solicitud de revisión mediante Pull Request.
+
+GitHub ejecuta las validaciones y Checkov antes de permitir integrar los cambios.
+
+Una vez aprobado e integrado el Pull Request, se activa el despliegue de infraestructura. El entorno protegido solicita la aprobación correspondiente antes de ejecutar el trabajo que realiza el plan y el apply.
+
+La publicación de la aplicación se gestiona mediante un workflow independiente, que construye y publica nuevas imágenes Docker y actualiza el servicio ECS.
+
 
 ## Prerrequisitos
 
@@ -69,13 +154,21 @@ El ALB atiende en HTTP y distribuye al puerto 8000 de las tareas. Las tareas se 
 - Repositorio GitHub `ISCOUTB/API-contenerizada-en-AWS-ECS-Fargate` y acceso para configurar variables y ejecutar Actions.
 - Las acciones de GitHub requieren que la confianza OIDC corresponda a ese repositorio y a las ramas `main`/`master`.
 
+
 ## Orden de despliegue
 
-1. Bootstrap local, una sola vez. Siga [`infra/bootstrap/README.md`](infra/bootstrap/README.md).
-2. Configurar variables del repositorio: `AWS_ROLE_ARN`, `AWS_REGION`, `TF_STATE_BUCKET` y `TF_STATE_KEY`.
-3. Desplegar infraestructura desde el workflow de Terraform.
-4. Publicar la aplicación desde el workflow de la API.
-5. Verificar `GET /health` y `/info` desde el ALB.
+El despliegue del proyecto se realiza en el siguiente orden:
+
+1. **Preparación del entorno:** instalar Terraform, AWS CLI y Docker, y comprobar los permisos de la cuenta AWS del equipo.
+2. **Bootstrap inicial:** ejecutar una sola vez el módulo `infra/bootstrap` con credenciales autorizadas. Este procedimiento crea el bucket S3 para el estado y configura la identidad OIDC.
+3. **Configuración de GitHub:** registrar las variables necesarias del repositorio y crear el entorno protegido `aws-infrastructure`.
+4. **Despliegue de infraestructura:** realizar los cambios de Terraform, abrir un Pull Request, revisar las validaciones e integrar los cambios aprobados.
+5. **Aprobación del despliegue:** autorizar la ejecución del entorno protegido en GitHub.
+6. **Publicación de la aplicación:** ejecutar el workflow `app-deploy.yml` para construir la imagen Docker, publicarla en ECR y actualizar ECS.
+7. **Verificación:** comprobar la disponibilidad de la API mediante los endpoints `/health` y `/info`, y revisar los registros de CloudWatch.
+
+El bootstrap es independiente de la infraestructura principal y no debe eliminarse durante las operaciones normales de mantenimiento.
+
 
 ## Configuración de GitHub
 
@@ -102,6 +195,25 @@ Todas son variables de repositorio en Settings → Secrets and variables → Act
 | `memory` | `512` | Memoria Fargate en MiB |
 | `log_retention_days` | `7` | Retención CloudWatch |
 | `image_tag` | `latest` | Imagen usada por la task definition inicial |
+
+
+### Entorno protegido para despliegues
+
+Además de las variables de repositorio, se debe configurar un entorno de GitHub llamado `aws-infrastructure`.
+
+Ruta de configuración:
+
+`Settings → Environments → New environment`
+
+El entorno debe tener:
+
+- Nombre: `aws-infrastructure`.
+- Un revisor obligatorio, si la configuración y el plan de GitHub lo permiten.
+- Restricción de despliegues a las ramas principales autorizadas.
+
+Los trabajos `deploy` y `destroy` de `infra-deploy.yml` utilizan este entorno para controlar el acceso a las operaciones de infraestructura.
+
+La configuración de confianza OIDC en IAM debe coincidir con el contexto del entorno protegido.
 
 ## API y verificación
 
@@ -144,11 +256,26 @@ El proyecto ya dispone de la estructura y de la documentación teórica necesari
 
 Use la plantilla de [`docs/EVIDENCIAS.md`](docs/EVIDENCIAS.md) para documentar este cierre.
 
+
 ## Destrucción y limpieza
 
-1. Ejecutar `infra-deploy.yml` con `destroy=true` si se desea eliminar el entorno de laboratorio.
-2. Confirmar en AWS la eliminación del ALB, ECS, VPC y ECR.
-3. Revisar el bucket S3 del estado antes de borrarlo, teniendo en cuenta versiones y delete markers.
+La eliminación de recursos de la infraestructura principal se realiza mediante el workflow `infra-deploy.yml`.
+
+El procedimiento requiere:
+
+1. Abrir el workflow en GitHub Actions.
+2. Seleccionar `Run workflow`.
+3. Ejecutarlo desde una rama principal autorizada.
+4. Activar la opción `destroy`.
+5. Escribir `DESTROY DOMUSNET` en el campo de confirmación.
+6. Obtener la aprobación del entorno protegido `aws-infrastructure`.
+
+Antes de realizar esta operación, el equipo debe comprobar qué recursos serán eliminados y asegurarse de que no se necesiten.
+
+Después de la destrucción, se debe verificar en AWS la eliminación de los recursos principales.
+
+El bucket S3 del bootstrap y el estado remoto deben conservarse mientras sean necesarios para administrar la infraestructura.
+
 
 ## Costos y control
 
