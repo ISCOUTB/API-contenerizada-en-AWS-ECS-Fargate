@@ -1,61 +1,224 @@
-# Arquitectura
+
+# Arquitectura de DOMUSNET
+
+## 1. Descripción general
+
+DOMUSNET es una API desarrollada con FastAPI y desplegada como contenedor en Amazon ECS utilizando AWS Fargate.
+
+La infraestructura se define mediante Terraform, mientras que GitHub Actions automatiza la validación, el análisis de seguridad y el despliegue.
+
+La arquitectura utiliza servicios de AWS para administrar la red, ejecutar la aplicación, almacenar las imágenes Docker y centralizar los registros.
+
+## 2. Diagrama de arquitectura
 
 ```mermaid
-flowchart LR
-    Usuario["Cliente HTTP"] -->|HTTP :80| ALB["Application Load Balancer<br/>subredes públicas en 2 AZ"]
-    ALB -->|health check /health| ECS["Servicio Amazon ECS"]
-    ECS -->|Fargate, IP pública| Task["Tarea Fargate<br/>FastAPI :8000"]
-    Task -->|awslogs| Logs["CloudWatch Logs<br/>retención 7 días"]
-    ECR["Amazon ECR<br/>imagen SHA y latest"] -->|descarga de imagen| Task
-    Internet["Internet Gateway"] --- ALB
-    Internet --- Task
-    GitHub["GitHub Actions<br/>OIDC"] -->|Terraform + despliegue| ECS
-    GitHub -->|push después de Trivy| ECR
-    GitHub -->|estado remoto cifrado| State["Bucket S3 versionado<br/>bloqueo nativo"]
+flowchart TB
+    Usuario["Cliente / Internet"]
+    IGW["Internet Gateway"]
+
+    subgraph AWS["Cuenta de AWS"]
+        subgraph VPC["VPC 10.20.0.0/16"]
+            subgraph Publicas["Dos subredes públicas en dos AZ"]
+                ALB["Application Load Balancer<br/>HTTP puerto 80"]
+                TG["Target Group<br/>HTTP puerto 8000<br/>Health check /health"]
+                subgraph ECS["Amazon ECS"]
+                    Servicio["Servicio ECS"]
+                    Task["Tarea AWS Fargate<br/>FastAPI puerto 8000<br/>256 CPU / 512 MiB"]
+                end
+            end
+        end
+
+        ECR["Amazon ECR<br/>Imagen Docker"]
+        CW["CloudWatch Logs<br/>API y VPC Flow Logs"]
+        S3["Amazon S3<br/>Estado remoto Terraform"]
+        KMS["AWS KMS<br/>Cifrado"]
+    end
+
+    GH["GitHub Actions<br/>OIDC"]
+
+    Usuario -->|"HTTP :80"| ALB
+    IGW --- ALB
+    ALB --> TG
+    TG --> Servicio
+    Servicio --> Task
+    ECR -->|"Descarga de imagen"| Task
+    Task -->|"Logs de aplicación"| CW
+    VPC -->|"Flow Logs"| CW
+    KMS --> CW
+    GH -->|"Publica imágenes"| ECR
+    GH -->|"Actualiza ECS"| Servicio
+    GH -->|"Terraform y estado"| S3
+    GH -->|"Autenticación OIDC"| AWS
 ```
 
-## Estado actual de implementación
+## 3. Componentes de la infraestructura
 
-El repositorio refleja un proyecto ya avanzado en su construcción. En este punto se ha dejado implementado lo siguiente:
+### 3.1. Amazon VPC
 
-- Aplicación web en FastAPI con endpoints básicos para salud e información.
-- Imagen Docker que ejecuta la API en el puerto 8000.
-- Infraestructura de red y seguridad con VPC, subredes públicas, internet gateway y grupos de seguridad.
-- Balanceador ALB público y reglas para reenviar tráfico a la tarea Fargate.
-- Servicio ECS con ejecución en Fargate.
-- Repositorio ECR con etiquetado por SHA y `latest`.
-- Políticas IAM para que GitHub Actions asuma el rol con OIDC.
-- Estado remoto Terraform en S3 con versionado y cifrado.
-- Workflows de validación, despliegue y análisis de seguridad.
+Se utiliza una VPC con el rango de direcciones IP 10.20.0.0/16.
 
-## Componentes y flujo
+Dentro de esta red se crean dos subredes públicas distribuidas en dos zonas de disponibilidad.
 
-- Una VPC contiene dos subredes públicas en zonas de disponibilidad distintas, un Internet Gateway y rutas a Internet. No hay NAT Gateway para evitar su costo fijo. Las tareas reciben IP pública.
-- El ALB recibe HTTP por el puerto 80 y reenvía al puerto de la API en un target group `ip`. El health check consulta `GET /health`.
-- Un servicio ECS ejecuta una tarea Fargate con 256 CPU y 512 MiB. El security group de tareas solo permite ingreso desde el security group del ALB. El grupo de logs tiene retención configurable y se centraliza en CloudWatch.
-- ECR almacena la imagen, analiza cada publicación y conserva las imágenes más recientes. Las acciones publican el SHA y `latest` luego de pasar Trivy.
-- Terraform mantiene el estado principal en S3 con versionado, cifrado y bloqueo nativo de archivos `.tflock`. El rol de GitHub se asume con OIDC; no se almacenan access keys.
+La VPC cuenta con un Internet Gateway y una tabla de rutas que permite la comunicación con Internet.
 
-La API usa HTTP sin TLS para mantener el taller sencillo y económico. No debe transportar información sensible ni considerarse una configuración de producción.
+No se utiliza NAT Gateway para reducir los costos del entorno académico.
 
-## Alcance funcional alcanzado
+### 3.2. Application Load Balancer
 
-El proyecto ya está listo para demostrar un ciclo completo de despliegue en AWS, siempre que la infraestructura se aplique en un entorno con permisos adecuados. La parte funcional completada incluye:
+El Application Load Balancer recibe las solicitudes HTTP mediante el puerto 80.
 
-- Contrucción del artefacto de aplicación.
-- Validación de la app con pruebas.
-- Despliegue automatizado vía GitHub Actions.
-- Seguridad con Trivy y Checkov.
-- Observabilidad y logs con CloudWatch.
+Su función es distribuir las solicitudes hacia las tareas de la aplicación que se ejecutan en ECS Fargate.
 
-## Limitaciones actuales
+Utiliza un Target Group configurado para recibir tráfico en el puerto 8000.
 
-- La arquitectura está orientada a laboratorio y no a entorno productivo.
-- El ALB y las tareas usan red pública por simplicidad y costo.
-- La evidencia final del taller aún debe completarse con ejecuciones y capturas reales.
-- La validación final de la solución requiere la ejecución efectiva del pipeline en AWS.
+El health check consulta el endpoint /health para comprobar que la API esté disponible.
 
-## Estado general
+### 3.3. Amazon ECS y AWS Fargate
 
-Se puede considerar que el proyecto está en una fase de madurez intermedia: la solución técnica ya está diseñada y montada; el siguiente paso es validar y documentar la ejecución real de las automatizaciones y la disponibilidad de la API en producción de laboratorio.
+Amazon ECS administra el clúster, la definición de tarea y el servicio de la aplicación.
+
+AWS Fargate ejecuta los contenedores sin necesidad de administrar servidores EC2.
+
+La configuración predeterminada de la tarea utiliza:
+
+- CPU: 256 unidades.
+- Memoria: 512 MiB.
+- Tipo de lanzamiento: Fargate.
+- Cantidad deseada: una tarea.
+- Puerto de la aplicación: 8000.
+
+El servicio incorpora un mecanismo de despliegue y reversión automática cuando una actualización no logra estabilizarse.
+
+### 3.4. Amazon ECR
+
+Amazon Elastic Container Registry almacena las imágenes Docker utilizadas por la aplicación.
+
+Las imágenes se publican con dos etiquetas:
+
+- SHA del commit para identificar una versión específica.
+- latest para la versión más reciente.
+
+El repositorio tiene análisis de imágenes al momento de la publicación y una política de ciclo de vida que conserva las diez imágenes más recientes.
+
+### 3.5. Seguridad y grupos de seguridad
+
+La seguridad de red se administra mediante Security Groups.
+
+El balanceador permite conexiones HTTP desde Internet por el puerto 80.
+
+Las tareas Fargate únicamente permiten conexiones entrantes desde el Security Group del balanceador, mediante el puerto 8000.
+
+El tráfico de salida de las tareas se limita a los puertos necesarios para HTTPS y DNS.
+
+Las credenciales de GitHub Actions se obtienen mediante OIDC, evitando almacenar claves permanentes de AWS en el repositorio.
+
+### 3.6. AWS IAM
+
+IAM administra los permisos necesarios para los servicios.
+
+Se utilizan roles separados para:
+
+- Ejecución de las tareas ECS.
+- Acceso de la aplicación a los servicios que necesita.
+- Envío de registros de VPC Flow Logs.
+- Acceso de GitHub Actions mediante OIDC.
+
+### 3.7. Amazon CloudWatch
+
+CloudWatch almacena los registros generados por la aplicación y por la VPC.
+
+Se configuran grupos de logs para:
+
+- Registros de la API.
+- VPC Flow Logs.
+
+Los registros utilizan cifrado mediante AWS KMS y una retención predeterminada de siete días.
+
+### 3.8. Amazon S3
+
+Amazon S3 se utiliza para almacenar el estado remoto de Terraform.
+
+El bucket se prepara mediante el módulo bootstrap y cuenta con:
+
+- Cifrado.
+- Versionado.
+- Bloqueo del acceso público.
+- Bloqueo del estado mediante el mecanismo nativo de Terraform.
+
+El bucket bootstrap se mantiene separado de la infraestructura principal para evitar eliminar el estado durante una operación de destrucción.
+
+## 4. Flujo de funcionamiento de la aplicación
+
+1. El cliente realiza una solicitud HTTP.
+2. El Application Load Balancer recibe la solicitud.
+3. El balanceador la dirige al servicio ECS.
+4. ECS administra la tarea que ejecuta FastAPI en Fargate.
+5. La aplicación procesa la petición y devuelve la respuesta.
+6. Los registros de ejecución se envían a CloudWatch.
+
+ECR proporciona la imagen Docker utilizada por la definición de tarea.
+
+## 5. Flujo de automatización CI/CD
+
+El repositorio utiliza tres workflows de GitHub Actions.
+
+### 5.1. infra-deploy.yml
+
+Se encarga de la infraestructura.
+
+Ejecuta:
+
+- Verificación de formato con Terraform.
+- Inicialización de proveedores.
+- Validación de configuración.
+- Análisis de seguridad con Checkov.
+- Autenticación AWS mediante OIDC.
+- Terraform plan y apply.
+- Publicación de outputs.
+
+El despliegue requiere una aprobación mediante el entorno protegido configurado en GitHub.
+
+### 5.2. app-deploy.yml
+
+Se encarga de automatizar la publicación de la aplicación.
+
+Su proceso contempla:
+
+- Ejecución de pruebas.
+- Construcción de imagen Docker.
+- Análisis de seguridad con Trivy.
+- Publicación de imágenes en ECR.
+- Actualización del servicio ECS Fargate.
+- Comprobación de disponibilidad de la API.
+
+### 5.3. security-scan.yml
+
+Realiza análisis de seguridad del repositorio mediante Trivy.
+
+Permite identificar vulnerabilidades, secretos y problemas de configuración.
+
+Los resultados se almacenan como evidencia del análisis.
+
+## 6. Decisiones y limitaciones de arquitectura
+
+La arquitectura se diseñó para un entorno académico, priorizando la automatización y el control de costos.
+
+Entre sus principales decisiones se encuentran:
+
+- Uso de Fargate para evitar administrar servidores.
+- Subredes públicas para simplificar la conectividad y evitar NAT Gateway.
+- ALB público para permitir probar la API.
+- HTTP sin TLS debido a que el taller no incluye dominio ni certificado.
+- Retención limitada de logs para controlar costos.
+- Uso de OIDC para evitar credenciales permanentes.
+
+Esta configuración no debe considerarse una arquitectura de producción para información sensible.
+
+## 7. Estado de implementación
+
+La infraestructura se encuentra definida en Terraform y cuenta con workflows preparados para automatizar su administración.
+
+La validación local de Terraform puede comprobar la sintaxis y estructura de los archivos, pero no demuestra por sí sola que los servicios estén desplegados en AWS.
+
+La finalización del proyecto requiere ejecutar los workflows con la cuenta del equipo, verificar los recursos y documentar los resultados reales en docs/EVIDENCIAS.md.
 
